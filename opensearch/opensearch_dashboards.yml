@@ -1,0 +1,51 @@
+# Full replacement for the image's bundled opensearch_dashboards.yml (see
+# docs/opensearch-auth.md and docs/gotchas.md for why a full replacement,
+# not env vars, is used here -- DISABLE_SECURITY_DASHBOARDS_PLUGIN is no
+# longer set, so the image's entrypoint no longer sed-strips
+# opensearch_security lines out of whatever file is at this path).
+
+# Without this, Dashboards binds to `localhost` *inside the container*,
+# unreachable via the `5601:5601` port mapping despite starting up fine and
+# logging no error -- confirmed as the literal bundled default file's own
+# comment.
+server.host: '0.0.0.0'
+
+# Container-internal, now TLS (OpenSearch's security plugin demo certs).
+opensearch.hosts: ["https://opensearch:9200"]
+opensearch.ssl.verificationMode: none
+# Dashboards' own backend-to-OpenSearch service account for its own index
+# maintenance (.kibana etc.) -- entirely separate from the OIDC/human-login
+# layer below. Unchanged from the image's bundled demo default; confirmed
+# working via curl before this file existed.
+opensearch.username: kibanaserver
+opensearch.password: kibanaserver
+# "authorization" must stay in this whitelist -- it's what forwards the
+# logged-in user's bearer token through Dashboards' proxy to OpenSearch's
+# own openid_auth_domain (see config.yml). Without it, a real Keycloak
+# login would authenticate to Dashboards but then 401 on every OpenSearch
+# query it makes on the user's behalf.
+opensearch.requestHeadersWhitelist: [authorization, securitytenant]
+
+# Two auth methods active at once: "openid" for real human browser login,
+# "basicauth" so scripts/provision_dashboards.py can keep using a plain
+# Authorization: Basic header exactly like it already does against
+# OpenSearch directly -- no session-cookie login dance needed for it.
+# multiple_auth_enabled is NOT optional once auth.type has more than one
+# entry -- Dashboards throws at startup without it.
+opensearch_security.auth.type: ["basicauth", "openid"]
+opensearch_security.auth.multiple_auth_enabled: true
+
+opensearch_security.openid.connect_url: "http://keycloak:8080/realms/platform/.well-known/openid-configuration"
+opensearch_security.openid.client_id: "opensearch-dashboards"
+opensearch_security.openid.client_secret: "opensearch-dashboards-secret-dev-only"
+# Must be set explicitly: if unset, Dashboards derives the redirect_uri it
+# sends to Keycloak from its own container bind address (0.0.0.0:5601),
+# producing a redirect Keycloak can never actually reach.
+opensearch_security.openid.base_redirect_url: "http://localhost:5601"
+opensearch_security.openid.scope: "openid profile email"
+
+# The shipped default is `true` (with a Private/Global tenant picker screen
+# after login) -- this project has no use for multitenancy and explicitly
+# does not want that extra screen. Must be set explicitly in a full-file
+# replacement like this one, or it's silently re-inherited.
+opensearch_security.multitenancy.enabled: false

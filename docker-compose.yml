@@ -1,0 +1,313 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: p2-postgres
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/phasetwo/phasetwo-keycloak:26.6.6
+    container_name: p2-keycloak
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["start-dev"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8082
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      # Points Keycloak's built-in CIBA "Authentication Channel" SPI (the
+      # one piece of the CIBA flow Keycloak deliberately ships dev-only,
+      # not a real end-user notification mechanism) at ciba-notifier
+      # (below) -- confirmed empirically that this exact env var name is
+      # what actually wires it up, not assumed from docs. See
+      # docs/ciba-support-delegation.md.
+      KC_SPI_CIBA_AUTH_CHANNEL_CIBA_HTTP_AUTH_CHANNEL_HTTP_AUTHENTICATION_CHANNEL_URI: "http://ciba-notifier:2024/notify"
+      KC_HEALTH_ENABLED: "true"
+      # Recommended by keycloak-orgs: prevent standard users from writing the
+      # active-organization attribute directly (see docs/active-organization.md).
+      KC_SPI_USER_PROFILE_DECLARATIVE_USER_PROFILE_READ_ONLY_ATTRIBUTES: "org.ro.*"
+    ports:
+      - "8082:8080"
+    healthcheck:
+      # Two separate bugs, both confirmed live in this exact container, not
+      # assumed: (1) this container has no curl/wget, only bash -- CMD-SHELL
+      # runs under /bin/sh though, which doesn't support bash's /dev/tcp
+      # redirection, so the check always silently reported "unhealthy" even
+      # when Keycloak itself was fine (see docs/gotchas.md) -- fixed by
+      # explicitly invoking bash -c. (2) Keycloak 26's health endpoints live
+      # on a separate *management* interface, port 9000 by default -- NOT
+      # the main HTTP port (8080) the original check hit, which 404s there
+      # regardless of Keycloak's actual health. This newly matters beyond
+      # cosmetics: opensearch-dashboards now depends on Keycloak actually
+      # being ready (its OIDC plugin does a one-time synchronous
+      # discovery-doc fetch at startup with no retry -- see
+      # docs/opensearch-auth.md), so a real, working healthcheck is now a
+      # hard requirement, not just a nice-to-have.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e \"GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n\" >&3 && grep -q \"\\\"status\\\": \\\"UP\\\"\" <&3'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    container_name: p2-opensearch
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # Dev-only credential for the bundled demo security config (self-signed
+      # certs, default internal users) -- see docs/gotchas.md for why this
+      # replaces DISABLE_SECURITY_PLUGIN entirely rather than layering auth
+      # on top of it.
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "Poc-Multi-Org-Dev-2026!"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - osdata:/usr/share/opensearch/data
+      # Custom demo security config (adds the Keycloak openid_auth_domain +
+      # the vector_writer user/role) -- auto-applied by the entrypoint on a
+      # fresh security index (i.e. after `docker compose down -v`, since the
+      # index itself lives in the osdata volume above). See
+      # docs/opensearch-auth.md.
+      - ./opensearch/security-config:/usr/share/opensearch/config/opensearch-security:ro
+    ports:
+      - "9200:9200"
+    healthcheck:
+      # -k: self-signed demo cert. Security is now enabled (see
+      # OPENSEARCH_INITIAL_ADMIN_PASSWORD above), so this needs both TLS and
+      # a credential, unlike before.
+      test: ["CMD-SHELL", "curl -sfk -u admin:$$OPENSEARCH_INITIAL_ADMIN_PASSWORD https://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.19.1
+    container_name: p2-opensearch-dashboards
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      # Unlike product-app/org-cache-watcher (which tolerate Keycloak not
+      # being ready yet via their own retry loops), Dashboards' OIDC plugin
+      # does a one-time synchronous discovery-doc fetch at startup and
+      # crashes fatally (no retry) if Keycloak isn't reachable -- this
+      # really does need service_healthy, which only works now that
+      # Keycloak's healthcheck itself is fixed (see that service's
+      # healthcheck comment).
+      keycloak:
+        condition: service_healthy
+    volumes:
+      # Full config replacement, not env vars -- OIDC needs more keys than
+      # the image's env-var allowlist covers. See docs/opensearch-auth.md.
+      - ./opensearch/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+    ports:
+      - "5601:5601"
+    # Safety net for a standalone `docker compose up -d` (without
+    # setup.py's explicit restart, see restart_opensearch_dashboards.py) --
+    # keeps retrying rather than staying dead if it hits the fatal
+    # realm-doesn't-exist-yet crash on first boot.
+    restart: on-failure:10
+
+  vector:
+    image: timberio/vector:latest-alpine
+    container_name: p2-vector
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    environment:
+      # Shared secret Keycloak's webhook uses to HMAC-sign every event it
+      # sends here (authType: hmac, see provision_webhook_opensearch.py) --
+      # without this, anything on the docker network could POST fabricated
+      # events into keycloak-events. Dev-only value, matches this project's
+      # existing pattern of fixed dev secrets (product-app-secret-dev-only
+      # etc.). See docs/opensearch-auth.md.
+      # Keycloak no longer sends events here directly -- audit-chain-signer
+      # (below) is now the only sender, since it needs to attach a hash
+      # chain link before Vector ever sees the event. This secret is
+      # therefore purely internal between those two services now, never
+      # known to Keycloak. See docs/audit-log-integrity.md.
+      WEBHOOK_HMAC_SECRET_VECTOR: "Webhook-Hmac-Vector-Dev-2026!"
+    volumes:
+      - ./opensearch/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./opensearch/org-lookup.csv:/etc/vector/org-lookup.csv:ro
+    # --watch-config also hot-reloads enrichment table files (stable since
+    # Vector 0.46), so org_cache_watcher.py's CSV updates apply live with no
+    # restart needed on this side.
+    #
+    # --dangerously-allow-env-var-interpolation is required for
+    # ${WEBHOOK_HMAC_SECRET_VECTOR} in vector.yaml to actually substitute --
+    # confirmed empirically that without this flag Vector 0.58 silently
+    # leaves "${VAR}" as a literal string in the config with no error,
+    # which would make every webhook signature check fail closed (every
+    # real event silently dropped, not a loud failure). The name is
+    # deliberately alarming, but the actual exposure here is limited to
+    # this one dev-only shared secret, not arbitrary environment secrets.
+    command: ["--config", "/etc/vector/vector.yaml", "--watch-config", "--dangerously-allow-env-var-interpolation"]
+    ports:
+      - "2021:2021"
+
+  audit-chain-signer:
+    image: python:3.12-alpine
+    container_name: p2-audit-chain-signer
+    depends_on:
+      vector:
+        condition: service_started
+      # Now queries OpenSearch directly (not just through Vector) to confirm
+      # a forwarded event actually landed before committing chain state --
+      # see WEBHOOK_HMAC_SECRET_CHAIN's neighboring OPENSEARCH_* vars below
+      # and docs/audit-log-integrity.md.
+      opensearch:
+        condition: service_healthy
+    environment:
+      # Keycloak -> audit-chain-signer (this service's own inbound webhook,
+      # distinct from WEBHOOK_HMAC_SECRET_VECTOR below).
+      WEBHOOK_HMAC_SECRET_CHAIN: "Webhook-Hmac-Chain-Dev-2026!"
+      # audit-chain-signer -> vector (must match vector's own
+      # WEBHOOK_HMAC_SECRET_VECTOR above).
+      WEBHOOK_HMAC_SECRET_VECTOR: "Webhook-Hmac-Vector-Dev-2026!"
+      VECTOR_URL: "http://vector:2021/log/ingest"
+      # audit-chain-signer -> opensearch, direct: a minimally-scoped
+      # get-by-id-only user (opensearch/security-config/roles.yml's
+      # keycloak_events_reader), not vector_writer or admin -- this service
+      # only ever confirms one document's existence, never searches or
+      # writes.
+      OPENSEARCH_URL: "https://opensearch:9200"
+      OPENSEARCH_CONFIRM_USER: "audit_confirmer"
+      OPENSEARCH_CONFIRM_PASSWORD: "Audit-Confirmer-Dev-2026!"
+      CHAIN_STATE_PATH: "/data/audit-chain-state.json"
+      PORT: "2023"
+    volumes:
+      - ./scripts/audit_chain_signer.py:/app/audit_chain_signer.py:ro
+      - audit_chain_state:/data
+    command: ["python3", "/app/audit_chain_signer.py"]
+    restart: unless-stopped
+    ports:
+      - "2023:2023"
+
+  org-cache-watcher:
+    image: python:3.12-alpine
+    container_name: p2-org-cache-watcher
+    # keycloak's own Docker healthcheck is broken (relies on a bash-only
+    # /dev/tcp redirection under CMD-SHELL's /bin/sh) and always reports
+    # unhealthy despite the app itself starting fine -- pre-existing, not
+    # introduced here. Nothing else in this project gates on it; readiness is
+    # polled at the application level instead (see wait_for_keycloak() in
+    # keycloak_admin.py and this service's own retry loop).
+    depends_on:
+      keycloak:
+        condition: service_started
+    environment:
+      KC_URL: http://keycloak:8080
+      PLATFORM_REALM: platform
+      ADMIN_USER: admin
+      ADMIN_PASS: admin
+      ORG_LOOKUP_CSV: /data/org-lookup.csv
+      PORT: "2022"
+      # Shared secret Keycloak's webhook HMAC-signs every event with (see
+      # vector's WEBHOOK_HMAC_SECRET_VECTOR above and
+      # provision_webhook_opensearch.py) -- this webhook previously accepted
+      # any POST with no verification at all. Dev-only value.
+      WEBHOOK_HMAC_SECRET: "Webhook-Hmac-OrgCache-Dev-2026!"
+    volumes:
+      - ./scripts/org_cache_watcher.py:/app/org_cache_watcher.py:ro
+      # Mount the directory, not the single CSV file: writing this atomically
+      # (write-temp-then-rename) requires renaming onto a plain file, and a
+      # single-file bind mount makes the target itself a mount point, which
+      # the kernel refuses to rename onto ("Resource busy").
+      - ./opensearch:/data
+    command: ["python3", "/app/org_cache_watcher.py"]
+    restart: unless-stopped
+    ports:
+      - "2022:2022"
+
+  ciba-notifier:
+    image: python:3.12-alpine
+    container_name: p2-ciba-notifier
+    # Same rationale as org-cache-watcher above for service_started (not
+    # service_healthy) against keycloak's broken Docker healthcheck --
+    # readiness is irrelevant here anyway: this service only receives
+    # Keycloak's CIBA notification POSTs and calls back into Keycloak's
+    # token/callback endpoints on demand, it never blocks startup on them.
+    depends_on:
+      keycloak:
+        condition: service_started
+    environment:
+      KC_INTERNAL_URL: http://keycloak:8080
+      PLATFORM_REALM: platform
+      PORT: "2024"
+    volumes:
+      - ./scripts/ciba_notifier.py:/app/ciba_notifier.py:ro
+    command: ["python3", "/app/ciba_notifier.py"]
+    restart: unless-stopped
+    ports:
+      - "2024:2024"
+
+  product-app:
+    build: ./app
+    container_name: p2-product-app
+    depends_on:
+      keycloak:
+        condition: service_started
+      ciba-notifier:
+        condition: service_started
+    environment:
+      KC_URL: http://localhost:8082
+      KC_INTERNAL_URL: http://keycloak:8080
+      KC_CLIENT_ID: product-app
+      # Matches provision_product_app_client.py's CLIENT_SECRET -- dev-only,
+      # not for production use.
+      KC_CLIENT_SECRET: product-app-secret-dev-only
+      APP_SECRET_KEY: dev-secret-not-for-production
+      # ciba_notifier.py -- see docs/ciba-support-delegation.md. Polled from
+      # index() to show the "support wants access" approval banner.
+      CIBA_NOTIFIER_URL: http://ciba-notifier:2024
+    ports:
+      - "3000:3000"
+    volumes:
+      # Server-side session storage (see app/product_app.py's Session(app)
+      # setup) -- mounted so a container restart doesn't silently invalidate
+      # every open session, matching this project's convention of mounting
+      # volumes for anything stateful (see postgres/opensearch above).
+      - product_app_sessions:/data/flask_session
+
+  support-console:
+    build: ./support_console_app
+    container_name: p2-support-console
+    depends_on:
+      keycloak:
+        condition: service_started
+    environment:
+      # Server-to-server only -- unlike product-app, nothing here is ever
+      # called directly from the browser, so there's no browser-facing/
+      # internal URL split to make (see docs/architecture.md's "why two
+      # URLs" for why product-app needs one and this doesn't).
+      KC_INTERNAL_URL: http://keycloak:8080
+    ports:
+      - "3001:3001"
+
+volumes:
+  pgdata:
+  osdata:
+  product_app_sessions:
+  audit_chain_state:

@@ -1,0 +1,71 @@
+---
+_meta:
+  type: "internalusers"
+  config_version: 2
+admin:
+  hash: "$2y$12$3om1B9bL4w7ozBlgXrYY9eYZMRDsQSZxDOKLmSRbqc0Zo74Lyiu1O"
+  reserved: true
+  backend_roles:
+  - "admin"
+  description: "Demo admin user"
+anomalyadmin:
+  hash: "$2y$12$TRwAAJgnNo67w3rVUz4FIeLx9Dy/llB79zf9I15CKJ9vkM4ZzAd3."
+  reserved: false
+  opendistro_security_roles:
+  - "anomaly_full_access"
+  description: "Demo anomaly admin user, using internal role"
+kibanaserver:
+  hash: "$2a$12$4AcgAt3xwOWadA5s5blL6ev39OXDNhmOesEoo33eZtrq2N0YrU3H."
+  reserved: true
+  description: "Demo OpenSearch Dashboards user"
+kibanaro:
+  hash: "$2a$12$JJSXNfTowz7Uu5ttXfeYpeYE0arACvcwlPBStB1F.MI7f0U9Z4DGC"
+  reserved: false
+  backend_roles:
+  - "kibanauser"
+  - "readall"
+  attributes:
+    attribute1: "value1"
+    attribute2: "value2"
+    attribute3: "value3"
+  description: "Demo OpenSearch Dashboards read only user, using external role mapping"
+logstash:
+  hash: "$2a$12$u1ShR4l4uBS3Uv59Pa2y5.1uQuZBrZtmNfqB3iM/.jL0XoV9sghS2"
+  reserved: false
+  backend_roles:
+  - "logstash"
+  description: "Demo logstash user, using external role mapping"
+readall:
+  hash: "$2a$12$ae4ycwzwvLtZxwZ82RmiEunBbIPiAmGZduBAjKN0TXdwQFtCwARz2"
+  reserved: false
+  backend_roles:
+  - "readall"
+  description: "Demo readall user, using external role mapping"
+snapshotrestore:
+  hash: "$2y$12$DpwmetHKwgYnorbgdvORCenv4NAK8cPUg8AI6pxLCuWf/ALc0.v7W"
+  reserved: false
+  backend_roles:
+  - "snapshotrestore"
+  description: "Demo snapshotrestore user, using external role mapping"
+vector_writer:
+  # Dev-only password "Vector-Writer-Dev-2026!" -- Vector's own elasticsearch
+  # sink has no OAuth2/bearer-refresh support (confirmed against its sink
+  # schema), so unlike the human/admin path (which goes through Keycloak
+  # OIDC) this is a plain static internal user, scoped to only write the
+  # keycloak-events index (see roles.yml/roles_mapping.yml) -- not all_access.
+  hash: "$2y$12$RAH5/kY5elpbbOA.5LnkvuJlJ5XpqKfOBlAJQADFcfHLsq9lwvsjC"
+  reserved: false
+  backend_roles:
+  - "vector_writer"
+  description: "Vector's write-only user for the keycloak-events index"
+audit_confirmer:
+  # Dev-only password "Audit-Confirmer-Dev-2026!" -- audit_chain_signer.py
+  # uses this to confirm a document actually landed in OpenSearch before
+  # committing its own chain state (see docs/audit-log-integrity.md). Same
+  # "dedicated static internal user, minimally scoped" pattern as
+  # vector_writer above, just read-only instead of write-only.
+  hash: "$2y$12$ulLqE/YEOYoI55bc1lfxyOWiUmliQdYVk61/a3uwqkbfHnbBa.sOW"
+  reserved: false
+  backend_roles:
+  - "audit_confirmer"
+  description: "audit-chain-signer's read-only get-by-id user for the keycloak-events index"
