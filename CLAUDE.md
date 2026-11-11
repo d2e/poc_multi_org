@@ -21,6 +21,7 @@ otherwise). Index:
 | [docs/audit-log-integrity.md](docs/audit-log-integrity.md) | Tamper-evident hash chain on `keycloak-events`, `audit_chain_signer.py`, `verify_audit_chain.py` |
 | [docs/tenant-routing.md](docs/tenant-routing.md) | Subdomain-based IdP routing demo (`acme`, `kc_idp_hint`, the `product-app` container) |
 | [docs/multi-env-tenants.md](docs/multi-env-tenants.md) | One tenant, multiple env-orgs (`globex-dev/stage/prod`), org-scoped roles, switching between them |
+| [docs/dual-idp-precedence.md](docs/dual-idp-precedence.md) | Test scenario: one org with TWO linked federated IdPs — precedence rules, the `multipleIdpsEnabled` org config, and per-IdP domain narrowing |
 | [docs/ciba-support-delegation.md](docs/ciba-support-delegation.md) | Support requesting user-approved delegated access via OIDC CIBA (`support_console.py`, `ciba_notifier.py`) |
 | [docs/scripts.md](docs/scripts.md) | Every Python script, purpose, provisioning order |
 | [docs/testing.md](docs/testing.md) | `verify.py`, manual browser walkthrough, troubleshooting |

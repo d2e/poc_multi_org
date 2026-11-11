@@ -1,5 +1,6 @@
 id,name,tenant
 026adbb8-a5aa-4ac2-982b-99da76ca6827,acme,
+53fb5f8a-8aa0-48e7-8fe9-510e999723fc,dualidp,
 17e87514-8df0-4b3e-926e-4ca46c7d5d7c,globex-dev,globex
 aa80a478-b0f0-4b6f-baa7-a673b44ff420,globex-prod,globex
 c0cea560-3814-4010-8e21-4c39767ca399,globex-stage,globex

@@ -87,6 +87,31 @@
   *combined* Username Password Form**, not the whole flow: it only collects
   and resolves the username. It must be immediately followed by a standalone
   `auth-password-form` execution to actually collect the password.
+- **Linking a second IdP to an org doesn't error — it silently evicts the
+  first one.** `POST /realms/{realm}/orgs/{orgId}/idps` returns `201` every
+  time, but with the org config's `multipleIdpsEnabled` off (the default),
+  it also clears the *previous* IdP's `home.idp.discovery.org` attribute —
+  no exception, no 409, nothing in the response to signal it. Confirmed by
+  decompiling `IdentityProvidersResource.createIdentityProvider()` in the
+  actual `keycloak-orgs` jar: it calls
+  `deactivateOtherIdps(rep, !isMultipleIdpsConfigEnabled(realm), orgId)`.
+  Turn `multipleIdpsEnabled` on (`PUT /realms/{realm}/orgs/config`) *before*
+  linking a second IdP to the same org, or the first one quietly stops being
+  reachable via Home IdP Discovery. Even then, precedence between two
+  genuinely-linked IdPs on the same domain is implementation-defined (not a
+  configurable priority) unless each IdP also declares its own
+  `home.idp.discovery.domains` to disambiguate. See
+  [dual-idp-precedence.md](dual-idp-precedence.md) for the full,
+  empirically-verified writeup.
+- **Deleting an org does not delete its linked IdPs.** They remain as
+  ordinary (if now un-linked, `home.idp.discovery.org` cleared) realm-level
+  identity providers — confirmed while tearing down and re-provisioning the
+  dual-IdP test scenario: re-running `provision_dual_idp_scenario.py` after
+  deleting just the org 409'd trying to re-create an IdP alias that was
+  "gone" from the org but still very much present at
+  `/admin/realms/{realm}/identity-provider/instances/{alias}`. A full
+  cleanup of an org's IdPs needs an explicit second delete call against that
+  endpoint, not just deleting the org.
 - Domains are considered unverified by default
   (`requireVerifiedDomain: false` on the Home IdP Discovery authenticator, and
   no domain TXT verification is run) — fine for a local POC, but a production
