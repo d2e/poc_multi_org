@@ -91,7 +91,7 @@ For scripted access to OpenSearch/Dashboards data, use the `opensearch.admin`
 basic-auth credential directly against the OpenSearch REST API or the
 Dashboards saved-objects API instead (see
 [opensearch-auth.md](opensearch-auth.md)) — verifying actual on-screen
-rendering still needs a real browser session, per the root [CLAUDE.md](../CLAUDE.md)
+rendering still needs a real browser session, per the root [AGENTS.md](../AGENTS.md)
 UI-verification rule.
 
 ## Always-on services (not provisioning scripts, run as containers)

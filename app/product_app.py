@@ -269,7 +269,7 @@ def no_cache(response):
 
 def landing_page() -> str:
     """Reference index of every local demo URL + credential in this
-    project, one place instead of digging through README/CLAUDE.md.
+    project, one place instead of digging through README/AGENTS.md.
     Deliberately served from THIS app rather than a separate static file or
     container: visiting product-app with no recognized tenant subdomain
     (plain http://localhost:3000/) previously just 404'd as "Unknown

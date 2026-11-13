@@ -67,5 +67,5 @@ rm -rf scripts/.state    # scripts track created realm/org/client/webhook IDs he
 - [**docs/gotchas.md**](docs/gotchas.md) — every non-obvious thing found
   building this, for future reference
 
-See [`CLAUDE.md`](CLAUDE.md) for the condensed version aimed at an AI
+See [`AGENTS.md`](AGENTS.md) for the condensed version and open standard guidelines aimed at an AI
 assistant picking up work on this project.
