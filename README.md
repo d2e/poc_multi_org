@@ -22,6 +22,7 @@ Events dashboard: http://localhost:5601/app/dashboards#/view/keycloak-events-das
 Tenant routing demo: http://acme.sample.127.0.0.1.nip.io:3000
 Multi-env tenant demo: http://globex.sample.127.0.0.1.nip.io:3000
 Support console (CIBA support-delegation demo): http://localhost:3001 — see docs/ciba-support-delegation.md
+AI Agent delegation demo (RFC 8693 token exchange): `python3 scripts/demo_ai_agent_delegation.py` — see docs/ai-agent-delegation.md
 
 Test users (all password `password123`):
 | User | How they log in | Ends up in |
@@ -57,6 +58,8 @@ rm -rf scripts/.state    # scripts track created realm/org/client/webhook IDs he
   between them
 - [**docs/ciba-support-delegation.md**](docs/ciba-support-delegation.md) —
   support requesting user-approved delegated access via OIDC CIBA
+- [**docs/ai-agent-delegation.md**](docs/ai-agent-delegation.md) —
+  AI Agent Token Exchange Delegation (Keycloak 26.8+ RFC 8693 `act` claim, `may_act`, FGAP V2, sub-agent multi-hop delegation)
 - [**docs/scripts.md**](docs/scripts.md) — every Python script, what it
   does, provisioning order
 - [**docs/testing.md**](docs/testing.md) — `verify.py`, manual browser

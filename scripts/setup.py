@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import provision_active_org_client
+import provision_ai_agent_delegation
 import provision_browser_flow
 import provision_ciba_support
 import provision_dashboards
@@ -58,6 +59,9 @@ STEPS = [
     # Also independent -- just needs the platform realm. See
     # docs/ciba-support-delegation.md.
     provision_ciba_support,
+    # AI Agent Token Exchange Delegation (Keycloak 26.8+ preview). See
+    # docs/ai-agent-delegation.md.
+    provision_ai_agent_delegation,
 ]
 
 
@@ -106,6 +110,9 @@ def main() -> None:
     print("  -> approve/deny in product-app once logged in.")
     print("CIBA support-delegated access demo (browser UI): http://localhost:3001")
     print("  -> same flow, browser-driven. See docs/ciba-support-delegation.md.")
+    print("AI Agent Token Exchange Delegation demo (RFC 8693 'act' claim):")
+    print("  python3 scripts/demo_ai_agent_delegation.py")
+    print("  -> see docs/ai-agent-delegation.md.")
     print("=" * 58)
 
 

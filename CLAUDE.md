@@ -23,6 +23,7 @@ otherwise). Index:
 | [docs/multi-env-tenants.md](docs/multi-env-tenants.md) | One tenant, multiple env-orgs (`globex-dev/stage/prod`), org-scoped roles, switching between them |
 | [docs/dual-idp-precedence.md](docs/dual-idp-precedence.md) | Test scenario: one org with TWO linked federated IdPs — precedence rules, the `multipleIdpsEnabled` org config, and per-IdP domain narrowing |
 | [docs/ciba-support-delegation.md](docs/ciba-support-delegation.md) | Support requesting user-approved delegated access via OIDC CIBA (`support_console.py`, `ciba_notifier.py`) |
+| [docs/ai-agent-delegation.md](docs/ai-agent-delegation.md) | AI Agent Token Exchange Delegation (Keycloak 26.8+ RFC 8693 `act` claim, `may_act`, FGAP V2, sub-agent multi-hop delegation) |
 | [docs/scripts.md](docs/scripts.md) | Every Python script, purpose, provisioning order |
 | [docs/testing.md](docs/testing.md) | `verify.py`, manual browser walkthrough, troubleshooting |
 | [docs/gotchas.md](docs/gotchas.md) | Every non-obvious thing found building this — **check here first** before assuming something is a new bug |
@@ -62,6 +63,7 @@ Events dashboard: `http://localhost:5601/app/dashboards#/view/keycloak-events-da
 Tenant routing demo: `http://acme.sample.127.0.0.1.nip.io:3000` (`alice@acme.example.com`/`password123`)
 Multi-env tenant demo: `http://globex.sample.127.0.0.1.nip.io:3000` (`alice@globex.example.com`/`password123`)
 Support console (CIBA support-delegation demo): `http://localhost:3001` — see [docs/ciba-support-delegation.md](docs/ciba-support-delegation.md)
+AI Agent Token Exchange Delegation demo (RFC 8693): `python3 scripts/demo_ai_agent_delegation.py` — see [docs/ai-agent-delegation.md](docs/ai-agent-delegation.md)
 
 ## Verifying UI/browser-facing changes
 

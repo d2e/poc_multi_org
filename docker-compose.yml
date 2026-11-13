@@ -15,7 +15,7 @@ services:
       retries: 10
 
   keycloak:
-    image: quay.io/phasetwo/phasetwo-keycloak:26.6.6
+    image: quay.io/phasetwo/phasetwo-keycloak:26.8.2
     container_name: p2-keycloak
     depends_on:
       postgres:
@@ -32,6 +32,7 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"
+      KC_FEATURES: "token-exchange-delegation,parameterized-scopes,admin-fine-grained-authz:v2"
       # Points Keycloak's built-in CIBA "Authentication Channel" SPI (the
       # one piece of the CIBA flow Keycloak deliberately ships dev-only,
       # not a real end-user notification mechanism) at ciba-notifier
@@ -285,10 +286,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Server-side session storage (see app/product_app.py's Session(app)
-      # setup) -- mounted so a container restart doesn't silently invalidate
-      # every open session, matching this project's convention of mounting
-      # volumes for anything stateful (see postgres/opensearch above).
+      - ./app/product_app.py:/app/product_app.py:ro
       - product_app_sessions:/data/flask_session
 
   support-console:

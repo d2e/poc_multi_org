@@ -344,11 +344,31 @@ def test_multi_env_tenant_switching() -> None:
     pass_("logout after switching orgs ended the Keycloak SSO session (no silent re-auth)")
 
 
+def test_ai_agent_delegation() -> None:
+    print("--- Test 5: AI agent token exchange delegation (RFC 8693 'act' claim) ---")
+    import demo_ai_agent_delegation
+
+    res = demo_ai_agent_delegation.run_delegation_flow("shared.user", "password123")
+    act = res["delegated_claims"].get("act")
+    if not act or act.get("client_id") != "ai-agent":
+        fail(f"expected delegated token to carry act.client_id == 'ai-agent', got {act}")
+    pass_("AI agent token exchange delegation issued 'act' claim asserting client_id=ai-agent")
+
+    if res["delegated_claims"].get("sub") != res["subject_claims"].get("sub"):
+        fail("delegated token subject did not match original human user")
+    pass_("delegated token subject preserved the original human user identity")
+
+    if not res.get("orgs"):
+        fail("AI agent failed to query organizations with delegated token")
+    pass_("AI agent successfully invoked downstream user-scoped API via delegated token")
+
+
 def main() -> None:
     test_federated_login()
     test_active_org_switch()
     test_subdomain_idp_routing()
     test_multi_env_tenant_switching()
+    test_ai_agent_delegation()
     print()
     print("All checks passed.")
 

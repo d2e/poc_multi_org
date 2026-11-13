@@ -285,6 +285,7 @@ def landing_page() -> str:
         ("Tenant routing demo (acme)", "http://acme.sample.127.0.0.1.nip.io:3000", "alice@acme.example.com / password123"),
         ("Multi-env tenant demo (globex)", "http://globex.sample.127.0.0.1.nip.io:3000", "alice@globex.example.com / password123 -- globex-dev (admin), switch to globex-stage (developer) / globex-prod (viewer)"),
         ("Support console (CIBA support-delegation demo)", "http://localhost:3001", "no login -- enter a user's email, they approve/deny from their own tab here"),
+        ("AI Agent Delegation demo (RFC 8693)", "/ai-agent", "Interactive browser flow: login -> consent screen -> may_act -> token exchange -> act claim"),
     ]
     test_users = [
         ("alice@org1.example.com", "password123", "federated via org1-idp -> org1"),
@@ -582,6 +583,194 @@ def logout():
     else:
         params["client_id"] = os.environ["KC_CLIENT_ID"]
     return redirect(f"{KC_URL}/realms/{PLATFORM_REALM}/protocol/openid-connect/logout?{urlencode(params)}")
+
+
+AI_AGENT_CLIENT_ID = "ai-agent"
+AI_AGENT_CLIENT_SECRET = "ai-agent-secret-dev-only"
+DEMO_APP_CLIENT_ID = "delegation-demo-app"
+DEMO_APP_CLIENT_SECRET = "delegation-demo-app-secret-dev-only"
+
+
+@app.route("/ai-agent")
+def ai_agent_index():
+    redirect_uri = f"{request.host_url.rstrip('/')}/ai-agent/callback"
+    auth_params = {
+        "client_id": DEMO_APP_CLIENT_ID,
+        "response_type": "code",
+        "scope": f"openid profile email delegation:client:{AI_AGENT_CLIENT_ID}",
+        "redirect_uri": redirect_uri,
+    }
+    auth_url = f"{KC_URL}/realms/{PLATFORM_REALM}/protocol/openid-connect/auth?{urlencode(auth_params)}"
+    return f"""<!doctype html>
+<html>
+<head>
+  <title>AI Agent Token Exchange Delegation Demo</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #24292f; }}
+    h1 {{ color: #0969da; border-bottom: 1px solid #d0d7de; padding-bottom: 0.5rem; }}
+    .card {{ background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 1.5rem; margin-bottom: 1.5rem; }}
+    .btn {{ display: inline-block; background: #1f883d; color: white; padding: 0.75rem 1.5rem; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 1.1rem; }}
+    .btn:hover {{ background: #1a7f37; }}
+    code {{ background: #eaeef2; padding: 0.2em 0.4em; border-radius: 3px; font-size: 90%; }}
+    ol {{ padding-left: 1.5rem; }}
+    li {{ margin-bottom: 0.5rem; }}
+  </style>
+</head>
+<body>
+  <h1>AI Agent Token Exchange Delegation (RFC 8693)</h1>
+  <div class="card">
+    <p>This demo illustrates how an autonomous <b>AI Agent</b> (Non-Human Identity) requests explicit, consent-based permission to act on behalf of a human user in Keycloak 26.8+.</p>
+    <h3>How this flow works:</h3>
+    <ol>
+      <li>Clicking the button below initiates an interactive OAuth 2.0 flow with <code>scope=delegation:client:ai-agent</code>.</li>
+      <li>Keycloak prompts the user to grant explicit consent for <code>ai-agent</code> to act on their behalf.</li>
+      <li>Keycloak validates Fine-Grained Admin Permissions (FGAP V2) and mints a subject token with a <code>may_act</code> assertion.</li>
+      <li>The AI Agent authenticates via client credentials and executes an RFC 8693 token exchange.</li>
+      <li>The resulting delegated token contains an immutable <code>act</code> (actor) claim certifying the AI agent while preserving the user's <code>sub</code> identity.</li>
+      <li>The agent uses the token to query user-scoped APIs on their behalf.</li>
+    </ol>
+    <p style="margin-top: 1.5rem;">
+      <a class="btn" href="{auth_url}">Launch Interactive Delegation Flow &rarr;</a>
+    </p>
+    <p style="font-size: 0.9rem; color: #57606a;">Test credentials: <code>shared.user</code> / <code>password123</code> (or <code>alice@acme.example.com</code> / <code>password123</code>)</p>
+  </div>
+  <p><a href="/">&larr; Back to Demo Index</a></p>
+</body>
+</html>"""
+
+
+@app.route("/ai-agent/callback")
+def ai_agent_callback():
+    error = request.args.get("error")
+    error_desc = request.args.get("error_description", "")
+    if error:
+        return f"""<!doctype html>
+<html>
+<head><title>Delegation Cancelled</title><style>body{{font-family:system-ui;max-width:700px;margin:3rem auto;color:#24292f;}} .denied{{color:#cf222e;font-size:1.2rem;}}</style></head>
+<body>
+  <h1>Delegation Request Cancelled or Denied</h1>
+  <p class="denied">Error: {error} - {error_desc}</p>
+  <p><a href="/ai-agent">&larr; Try Again</a> | <a href="/">Demo Index</a></p>
+</body></html>""", 400
+
+    code = request.args.get("code")
+    if not code:
+        return redirect(url_for("ai_agent_index"))
+
+    redirect_uri = f"{request.host_url.rstrip('/')}/ai-agent/callback"
+
+    # 1. Exchange code for user subject token
+    token_resp = requests.post(
+        f"{KC_INTERNAL_URL}/realms/{PLATFORM_REALM}/protocol/openid-connect/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": DEMO_APP_CLIENT_ID,
+            "client_secret": DEMO_APP_CLIENT_SECRET,
+            "code": code,
+            "redirect_uri": redirect_uri,
+        },
+        timeout=10,
+    )
+    if token_resp.status_code != 200:
+        return f"<h3>Failed to exchange authorization code</h3><pre>{token_resp.text}</pre>", 400
+    subject_token = token_resp.json()["access_token"]
+    subject_claims = decode_jwt_claims(subject_token)
+
+    # 2. Get AI Agent actor token
+    actor_resp = requests.post(
+        f"{KC_INTERNAL_URL}/realms/{PLATFORM_REALM}/protocol/openid-connect/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": AI_AGENT_CLIENT_ID,
+            "client_secret": AI_AGENT_CLIENT_SECRET,
+        },
+        timeout=10,
+    )
+    if actor_resp.status_code != 200:
+        return f"<h3>Failed to fetch AI agent actor token</h3><pre>{actor_resp.text}</pre>", 400
+    actor_token = actor_resp.json()["access_token"]
+    actor_claims = decode_jwt_claims(actor_token)
+
+    # 3. Perform RFC 8693 Token Exchange
+    exchange_resp = requests.post(
+        f"{KC_INTERNAL_URL}/realms/{PLATFORM_REALM}/protocol/openid-connect/token",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "client_id": AI_AGENT_CLIENT_ID,
+            "client_secret": AI_AGENT_CLIENT_SECRET,
+            "subject_token": subject_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "actor_token": actor_token,
+            "actor_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        },
+        timeout=10,
+    )
+    if exchange_resp.status_code != 200:
+        return f"<h3>Token Exchange Failed</h3><pre>{exchange_resp.text}</pre>", 400
+    delegated_token = exchange_resp.json()["access_token"]
+    delegated_claims = decode_jwt_claims(delegated_token)
+
+    # 4. Invoke downstream API with delegated token
+    api_resp = requests.get(
+        f"{KC_INTERNAL_URL}/realms/{PLATFORM_REALM}/orgs",
+        headers={"Authorization": f"Bearer {delegated_token}"},
+        timeout=10,
+    )
+    orgs = api_resp.json() if api_resp.ok else []
+
+    pretty_subject = json.dumps(subject_claims, indent=2)
+    pretty_actor = json.dumps(actor_claims, indent=2)
+    pretty_delegated = json.dumps(delegated_claims, indent=2)
+    pretty_orgs = json.dumps(orgs, indent=2)
+
+    return f"""<!doctype html>
+<html>
+<head>
+  <title>Delegation Result - AI Agent Flow</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #24292f; line-height: 1.5; }}
+    h1 {{ color: #1a7f37; }}
+    .badge {{ display: inline-block; padding: 0.25em 0.6em; font-size: 85%; font-weight: 600; border-radius: 20px; background: #dafbe1; color: #1a7f37; border: 1px solid #1a7f37; }}
+    .step {{ background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; }}
+    .step h3 {{ margin-top: 0; color: #0969da; }}
+    pre {{ background: #ffffff; border: 1px solid #d0d7de; padding: 1rem; border-radius: 6px; overflow: auto; font-size: 0.9rem; }}
+    .highlight {{ background: #fff8c5; padding: 0.1em 0.3em; border-radius: 3px; font-weight: bold; color: #9a6700; }}
+  </style>
+</head>
+<body>
+  <h1><span class="badge">&#10003; SUCCESS</span> Delegation Flow Completed via UI</h1>
+  <p>User <b>{subject_claims.get('name', subject_claims.get('preferred_username'))}</b> successfully consented to let <b>ai-agent</b> act on their behalf.</p>
+
+  <div class="step">
+    <h3>1. User Subject Token (Pre-Exchange)</h3>
+    <p>Issued by Keycloak upon user consent. Notice the <span class="highlight">may_act</span> assertion binding the authorized agent and adding it to <span class="highlight">aud</span>:</p>
+    <pre>{pretty_subject}</pre>
+  </div>
+
+  <div class="step">
+    <h3>2. AI Agent Actor Token</h3>
+    <p>The AI Agent's non-human identity obtained via service account client credentials:</p>
+    <pre>{pretty_actor}</pre>
+  </div>
+
+  <div class="step">
+    <h3>3. RFC 8693 Delegated Access Token (Post-Exchange)</h3>
+    <p>Keycloak verified the authorization and attached the immutable <span class="highlight">act</span> claim. Notice <b>sub</b> is the human user and <b>act</b> identifies the agent:</p>
+    <pre>{pretty_delegated}</pre>
+  </div>
+
+  <div class="step">
+    <h3>4. Downstream API Invocation</h3>
+    <p>The AI Agent called <code>GET /realms/platform/orgs</code> using the delegated Bearer token:</p>
+    <pre>{pretty_orgs}</pre>
+  </div>
+
+  <p>
+    <a href="/ai-agent">Run Flow Again &rarr;</a> | 
+    <a href="/">Back to Demo Index</a>
+  </p>
+</body>
+</html>"""
 
 
 if __name__ == "__main__":

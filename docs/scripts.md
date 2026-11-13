@@ -38,6 +38,7 @@ python3 scripts/verify.py   # automated smoke test (federated login + org switch
 | 12 | `provision_dashboards.py` | Provisions the OpenSearch Dashboards index pattern + dashboard (see [dashboards.md](dashboards.md)); now authenticates as the OpenSearch bootstrap admin (see [opensearch-auth.md](opensearch-auth.md)) |
 | 13 | `provision_service_account_client.py` | Creates the confidential `automation-svc` client (master realm, service accounts enabled) for headless service-to-service Admin API calls, scoped to the `platform` realm via master's auto-generated `platform-realm` client roles — no browser login or master admin username+password needed. Get a token: `client_credentials` grant against `http://localhost:8082/realms/master/protocol/openid-connect/token` with `client_id=automation-svc` / `client_secret=automation-svc-secret-dev-only` (or `keycloak_admin.service_account_token()`) |
 | 14 | `provision_ciba_support.py` | Sets `platform`'s CIBA policy (already Keycloak's default on this image, set explicitly anyway) and creates the confidential `support-tool` client (CIBA grant + poll delivery mode) — see [ciba-support-delegation.md](ciba-support-delegation.md) |
+| 15 | `provision_ai_agent_delegation.py` | Enables FGAP V2 (`adminPermissionsEnabled`), provisions confidential client `ai-agent` with standard token exchange enabled, provisions `delegation-demo-app` with consent required, and configures FGAP policy `ai-agent-sa-policy` and permission `ai-agent-delegate-users-permission` granting `delegate` scope on `Users`. See [ai-agent-delegation.md](ai-agent-delegation.md) |
 
 Every step is idempotent — checks `scripts/.state/*` or queries Keycloak
 directly before creating anything, so re-running `setup.py` on an already-
@@ -103,10 +104,11 @@ UI-verification rule.
 | `app/product_app.py` | `product-app` | Demo multi-tenant product app: subdomain-based IdP routing ([tenant-routing.md](tenant-routing.md)) and multi-env org switching ([multi-env-tenants.md](multi-env-tenants.md)) |
 | `support_console_app/support_console_app.py` | `support-console` | Browser UI for the "support agent" side of the CIBA demo (`http://localhost:3001`) — same flow as `scripts/support_console.py`, browser-driven instead of CLI-driven. Stateless: `auth_req_id` round-trips through the page's own URL/JS, no server-side session. See [ciba-support-delegation.md](ciba-support-delegation.md). |
 
-## Support tooling
+## AI Agent & Support tooling
 
 | File | Purpose |
 |---|---|
+| `scripts/demo_ai_agent_delegation.py` | Complete end-to-end demonstration of Keycloak 26.8+ AI Agent Token Exchange Delegation (RFC 8693): user consent for `delegation:client:ai-agent`, `may_act` issuance, client credentials actor token, token exchange, verification of `act` claim, and downstream user-scoped API invocation. See [ai-agent-delegation.md](ai-agent-delegation.md). |
 | `scripts/support_console.py` | The "support agent" side of the CIBA demo, as a CLI — run as `python3 scripts/support_console.py <email-or-username>`, requests delegated access, polls for approval, then reads the user's org info once approved. Same flow as `support-console` above, just terminal-driven. See [ciba-support-delegation.md](ciba-support-delegation.md). |
 
 ## Testing
