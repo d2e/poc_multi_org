@@ -115,6 +115,113 @@ Keycloak verifies `may_act`, checks Fine-Grained Admin Permissions, strips the p
 
 ---
 
+## How Delegation Scopes Work (Addition, Resolution & Attenuation)
+
+A common question in AI agent architectures is: **how does the delegation scope actually get created, validated, requested, and mapped into the token?**
+
+In Keycloak 26.8+, this involves a four-phase lifecycle:
+
+```
+[ 1. Realm Engine ]                  [ 2. FGAP V2 Gatekeeper ]             [ 3. OAuth2 Request ]          [ 4. RFC 8693 Exchange ]
+KC_FEATURES enabled                   Checks admin-permissions              App requests dynamic scope      Agent exchanges token
+        │                                        │                                    │                                  │
+Registers parameterized                  Verifies target client                GET /auth?scope=                   Strips delegation:client
+scope `delegation:client`                has `delegate` permission             delegation:client:ai-agent         Narrows functional scopes
+with 3 protocol mappers                  on resource type `Users`              User consents on screen            Attaches `act` claim
+```
+
+### 1. Realm Engine: Parameterized Scope Registration
+Unlike traditional static scopes (like `openid` or `profile`), delegation requires dynamic arguments specifying **which** client is receiving delegation authority.
+
+When Keycloak boots with `KC_FEATURES="parameterized-scopes,token-exchange-delegation"`, it automatically provisions:
+- **Scope Name**: `delegation:client`
+- **Scope Type**: `client-delegation` (`is.parameterized.scope: true`)
+- **Three Automatic Protocol Mappers**:
+  1. `client may_act client_id` (`oidc-parameterized-scope-mapper`):
+     - Parses `:ai-agent` from the scope string and writes it to `may_act.client_id`.
+  2. `client may_act sub` (`oidc-parameterized-scope-client-sub-mapper`):
+     - Resolves the service account UUID of `ai-agent` and maps it to `may_act.sub`.
+  3. `client delegation audience` (`oidc-parameterized-scope-audience-mapper`):
+     - Appends the target client ID (`ai-agent`) to the token's `aud` array so downstream verification passes.
+
+### 2. The Authorization Gate: Fine-Grained Admin Permissions (FGAP V2)
+Keycloak will **never** allow an untrusted client to receive delegation by default. Before presenting the scope on the consent screen or minting it into a token, Keycloak consults the realm's `admin-permissions` authorization engine:
+
+- **Resource Server**: `admin-permissions`
+- **Resource Type**: `Users`
+- **Scope**: `delegate`
+- **Policy**: `ai-agent-sa-policy` (bound to `service-account-ai-agent`)
+
+> [!IMPORTANT]
+> If a malicious or unauthorized client requests `scope=delegation:client:rogue-agent`, Keycloak checks FGAP V2. Because `rogue-agent` lacks the `delegate` permission on `Users`, Keycloak **silently drops the scope** from the request. The user is never prompted, and no `may_act` assertion is minted.
+
+### 3. Application Request & User Consent
+The frontend or client application initiates the standard OAuth 2.0 authorization code flow:
+
+```http
+GET /realms/platform/protocol/openid-connect/auth?
+    client_id=delegation-demo-app
+    &response_type=code
+    &redirect_uri=http://localhost:3000/ai-agent/callback
+    &scope=openid profile email delegation:client:ai-agent
+```
+
+1. **Evaluation**: Keycloak validates client scopes and verifies FGAP V2 permissions.
+2. **Interactive Consent**: Because `display.on.consent.screen: true` is configured, Keycloak prompts the user:
+   > *"Grant permission for **ai-agent** to act on your behalf?"*
+3. **Subject Token Minting**: Keycloak issues the user's Subject Token with `may_act`:
+   ```json
+   {
+     "sub": "alice-uuid",
+     "aud": ["account", "ai-agent"],
+     "scope": "openid profile email delegation:client:ai-agent",
+     "may_act": {
+       "client_id": "ai-agent",
+       "sub": "agent-service-account-uuid"
+     }
+   }
+   ```
+
+### 4. Scope Attenuation (Narrowing) During Token Exchange
+When `ai-agent` performs the RFC 8693 token exchange, it calls the token endpoint with:
+- `subject_token`: The user's subject token.
+- `actor_token`: The agent's own service account token.
+- `scope` (optional): The narrowed list of functional scopes it actually needs (e.g. `scope=calendar:read`).
+
+Keycloak applies **Monotonic Scope Attenuation**:
+1. It verifies that the requested scopes are a subset of the consented scopes.
+2. It **strips** `delegation:client:ai-agent` from the resulting access token (preventing the delegated token from being arbitrarily re-exchanged).
+3. It emits the final delegated token with the requested functional scopes and the immutable `act` claim.
+
+---
+
+## Agent Client ID & Non-Human Identity (NHI) Architecture
+
+### Does the AI Agent Have Its Own Client ID?
+**Yes.** In Keycloak, every autonomous agent is modeled as a distinct **Confidential Client** (in our PoC, `client_id: "ai-agent"`).
+
+### Why the Agent Must Have Its Own Client ID
+
+1. **Target of User Authorization**:
+   The user does not grant blanket delegation to the world; they consent to a specific agent identity:
+   `scope=delegation:client:ai-agent`
+   Keycloak stamps `may_act.client_id = "ai-agent"` directly into the user's token.
+
+2. **Cryptographic Binding & Theft Prevention**:
+   When exchanging the token, Keycloak requires the agent to authenticate via its own client credentials:
+   $$\text{Caller Client ID} == \text{subject\_token}.\texttt{may\_act.client\_id}$$
+   Even if an attacker intercepts the user's subject token, they **cannot exchange it** without possessing the private client secret (or mTLS key / private_key_jwt) of `ai-agent`.
+
+3. **Separation of Caller (`azp`) and Subject (`sub`)**:
+   - `sub`: Identifies the human resource owner (e.g. Alice).
+   - `azp`: Identifies the calling application/agent (`ai-agent`).
+   - `act`: Certifies the non-human service account executing the request on Alice's behalf.
+
+4. **Multi-Agent Governance & Least Privilege**:
+   Different agents in your organization (e.g., `ai-orchestrator`, `calendar-sub-agent`, `sql-runner`) each maintain their own client ID, secret, and FGAP V2 policies. This ensures that compromising a single specialized sub-agent does not expose tokens or permissions of any other agent.
+
+---
+
 ## Keycloak 26.8 Configuration
 
 ### 1. Feature Flags (`docker-compose.yml`)
